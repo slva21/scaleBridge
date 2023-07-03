@@ -31,8 +31,8 @@ public:
 
         for (int i = 0; i < N; ++i)
         {
-            A(i, 0) = imu_buffer_[i].norm(); // Use the magnitude of imu velocity
-            b(i) = vio_buffer_[i].norm();   // Use the magnitude of vio velocity
+            b(i, 0) = imu_buffer_[i].norm(); // Use the magnitude of imu velocity
+            A(i) = vio_buffer_[i].norm();   // Use the magnitude of vio velocity
         }
 
         Eigen::VectorXd x = A.bdcSvd(Eigen::ComputeThinU | Eigen::ComputeThinV).solve(b); // Solve Ax = b

@@ -3,6 +3,7 @@
 #include <ros/ros.h>
 #include <sensor_msgs/Imu.h>
 #include <geometry_msgs/PoseStamped.h>
+#include <tf2/LinearMath/Quaternion.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 #include <geometry_msgs/TransformStamped.h>
 #include <tf2_eigen/tf2_eigen.h>
@@ -17,6 +18,12 @@
 #include "data_buffer.hpp"
 
 #include "./DataAssociator.hpp"
+#include "./pose_pub.hpp"
+#include "./DEBUG/acc_pub.hpp"
+
+#include "./DEBUG/gazebo_state_sub.hpp"
+
+// rosrun lsd_slam_core live_slam image:=/camera/image_raw camera_info:=/kinect/depth/camera_info
 
 typedef Eigen::Matrix<float, 9, 1> State;
 
@@ -24,26 +31,21 @@ class INPUT_HANDLER
 {
 public:
     INPUT_HANDLER(State &state) : dt(0.005),
-                                  A((Eigen::MatrixXd(6, 6) << 1, dt, 0.5 * dt * dt, 0, 0, 0,
-                                     0, 1, dt, 0, 0, 0,
-                                     0, 0, 1, 0, 0, 0,
-                                     0, 0, 0, 1, dt, 0.5 * dt * dt,
-                                     0, 0, 0, 0, 1, dt,
-                                     0, 0, 0, 0, 0, 1)
-                                        .finished()),
-                                  C((Eigen::MatrixXd(6, 6) << 0, 1, 0, 0, 0, 0,
-                                     0, 0, 0, 0, 1, 0,
-                                     0, 0, 0, 0, 0, 1,
-                                     0, 0, 0, 0, 0, 0,
-                                     0, 0, 0, 0, 0, 0,
-                                     0, 0, 0, 0, 0, 0)
-                                        .finished()),
+                                  A(Eigen::MatrixXd::Zero(6, 6)),
+                                  C(Eigen::MatrixXd::Identity(6, 6)),
                                   Q(Eigen::MatrixXd::Identity(6, 6)),
                                   R(Eigen::MatrixXd::Identity(6, 6)),
                                   P(Eigen::MatrixXd::Identity(6, 6)),
-                                  kf(dt, A, C, Q, R, P),
-                                  efk_state(state)
+                                  efk_state(state), vio_pose_pub("visual_intertial/vio")
     {
+        // Define the state transition matrix A
+        Eigen::MatrixXd I = Eigen::MatrixXd::Identity(3, 3);
+        A << I, dt * I,
+            Eigen::MatrixXd::Zero(3, 3), I;
+
+        // Define the Kalman filter
+        kf = KalmanFilter(dt, A, C, Q, R, P);
+
         // Initialize NodeHandle
         ros::NodeHandle nh;
 
@@ -52,7 +54,7 @@ public:
         imu_data_sub = nh.subscribe("/drone/imu", 10, &INPUT_HANDLER::imuDataCallback, this);
 
         // Best guess of initial states
-        Eigen::VectorXd x0(6); // X = [ax, ay, az, rx, ry, rz]^T
+        Eigen::VectorXd x0(6); // X = [vx, vy, vz, rx, ry, rz]^T
         double t = ros::Time::now().toSec();
         x0 << 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f;
         kf.init(t, x0);
@@ -62,11 +64,20 @@ private:
     void lsdPoseCallback(const geometry_msgs::PoseStamped::ConstPtr &msg)
     {
 
-        // a rotation of -90 degrees about the x-axis followed by a rotation of -90 degrees about the new z-axis.
-        Eigen::Matrix3f world_to_opencv;
-        world_to_opencv << 0, -1, 0,
-            0, 0, -1,
-            1, 0, 0;
+        tf2::Quaternion qua_t_;
+        // qua_t_.setRPY(0, 3.14159, 3.14159);
+        qua_t_.setRPY(-1.5708, 0.0, 0.0);
+
+        // Now, convert this quaternion into an Eigen rotation matrix
+        Eigen::Quaterniond eigen_quat(qua_t_.w(), qua_t_.x(), qua_t_.y(), qua_t_.z());
+        Eigen::Matrix3d R_world_to_openCV = eigen_quat.toRotationMatrix();
+
+        // std::cout << "Rotation Matrix = \n"
+        //           << R_world_to_openCV << std::endl;
+
+        Eigen::Matrix4d transformation_matrix = Eigen::Matrix4d::Identity();                  // Creating a 4x4 Identity matrix
+        transformation_matrix.block<3, 3>(0, 0) = R_world_to_openCV;                          // Filling the rotation part of the matrix
+        Eigen::Isometry3d transformation_isometry = Eigen::Isometry3d(transformation_matrix); // Converting it to Isomet
 
         // Convert the PoseStamped message to an Eigen pose
         Eigen::Isometry3d current_pose_eigen_lsd;
@@ -74,7 +85,8 @@ private:
 
         // Transform the pose to world frame
         Eigen::Isometry3d current_pose_eigen = current_pose_eigen_lsd;
-        current_pose_eigen.linear() = world_to_opencv.cast<double>() * current_pose_eigen.linear();
+        current_pose_eigen = transformation_isometry * current_pose_eigen_lsd;
+        // Applying transformation
 
         ros::Time current_time = msg->header.stamp;
 
@@ -100,6 +112,20 @@ private:
         Eigen::Quaterniond quat = (Eigen::Quaterniond)current_pose_eigen.rotation();
         Eigen::Vector3d euler = quat.toRotationMatrix().eulerAngles(2, 1, 0); // get yaw,pitch,roll (Z,Y,X)
 
+        State vio_pose;
+
+        vio_pose << current_pose_eigen.translation().x(),
+            current_pose_eigen.translation().y(),
+            current_pose_eigen.translation().z(),
+            euler(2), // roll
+            euler(1), // pitch
+            euler(0), // yaw
+            0.0f, 0.0f, 0.0f;
+
+        vio_pose_pub.publishPose(current_pose_eigen);
+
+        vio_euler = euler.cast<float>();
+
         // Concatenate position and euler angles to form 6D vector
         Eigen::VectorXd pose_eigen(6);
         pose_eigen << position, euler;
@@ -119,6 +145,14 @@ private:
 
         if (imu_to_world_trans(*msg, acceleration))
         {
+
+            AccelerometerType acc;
+
+            acc[0] = acceleration[0];
+            acc[1] = acceleration[1];
+            acc[2] = acceleration[2];
+            // accelerometer_publisher.publishAccelerometer(acc);
+
             // Update Kalman filter with acceleration
             kf.update(acceleration);
 
@@ -126,14 +160,16 @@ private:
             Eigen::VectorXd estimated_state = kf.state();
 
             // Extract velocity from estimated state
-            Eigen::VectorXd estimated_velocity = estimated_state.tail(3); // Last 3 elements are velocity
+            Eigen::VectorXd estimated_velocity = estimated_state.head(3); // first 3 elements are linear velocity
 
             // ROS_INFO_STREAM("T State: \n"
-            //                 << estimated_state.format(Eigen::IOFormat(Eigen::FullPrecision)));
+            //                 << estimated_velocity.format(Eigen::IOFormat(Eigen::FullPrecision)));
 
             ros::Time time = ros::Time::now();
 
-            data_associator.addImuData(estimated_velocity, time);
+            // DEBUG
+
+            data_associator.addImuData(gazebo_listener.getLinearVel(), time);
 
             imu_buffer_world.addPair(acceleration, time);
         }
@@ -145,10 +181,10 @@ public:
         // Define world gravity
         Eigen::Vector3f gravity_world_frame(0.0, 0.0, 9.81);
 
-        // R for imu_to_gazebo_imu
+        // R for imu_to_gazebo_imu ( Ry_90 then Rx_90 -> Rx*Ry)
         Eigen::Matrix3f rawtoGazebo;
         rawtoGazebo << 0.0f, 0.0f, 1.0f,
-            -1.0f, 0.0f, 0.0f,
+            1.0f, 0.0f, 0.0f,
             0.0f, 1.0f, 0.0f;
 
         if (efk_state.size() < 6)
@@ -158,9 +194,14 @@ public:
         }
 
         // Retrieve state
-        Eigen::Vector3f position_world = efk_state.head<3>();  // x, y, z
+        Eigen::Vector3f position_world = efk_state.head<3>(); // x, y, z
+
         Eigen::Vector3f eulerAngles = efk_state.segment<3>(3); // roll, pitch, yaw
-        Eigen::Matrix3f R_world_to_body = eulerToRotationMatrix(eulerAngles);
+        Eigen::Matrix3f R_world_to_body = eulerToRotationMatrix(vio_euler);
+
+        // std::cout << "ROll-VIO " << radToDeg(vio_euler[0]) << " PITCH-VIO " << radToDeg(vio_euler[1]) << std::endl;
+
+        // std::cout << " " << std::endl;
 
         // Get the IMU data in the form of Eigen::Vector3f
         Eigen::Vector3f imu_linear_acceleration(imu_msg.linear_acceleration.x, imu_msg.linear_acceleration.y, imu_msg.linear_acceleration.z);
@@ -183,7 +224,7 @@ public:
         Eigen::Vector3f imu_angular_velocity_transformed = R_world_to_imu.transpose() * Eigen::Vector3f(imu_msg.angular_velocity.x, imu_msg.angular_velocity.y, imu_msg.angular_velocity.z);
 
         // Prepare result
-        tranformed << imu_linear_acceleration_transformed.cast<double>() , imu_angular_velocity_transformed.cast<double>();
+        tranformed << imu_linear_acceleration_transformed.cast<double>(), imu_angular_velocity_transformed.cast<double>();
 
         return true;
     }
@@ -191,15 +232,32 @@ public:
     Eigen::Matrix3f eulerToRotationMatrix(Eigen::Vector3f euler)
     {
         Eigen::Matrix3f R;
-        R = Eigen::AngleAxisf(euler(2), Eigen::Vector3f::UnitZ()) * // yaw
+        // R = Eigen::AngleAxisf(euler(2), Eigen::Vector3f::UnitZ()) * // yaw
+        //     Eigen::AngleAxisf(euler(1), Eigen::Vector3f::UnitY()) * // pitch
+        //     Eigen::AngleAxisf(euler(0), Eigen::Vector3f::UnitX());  // roll
+
+        R = Eigen::AngleAxisf(euler(0), Eigen::Vector3f::UnitZ()) * // yaw
             Eigen::AngleAxisf(euler(1), Eigen::Vector3f::UnitY()) * // pitch
-            Eigen::AngleAxisf(euler(0), Eigen::Vector3f::UnitX());  // roll
+            Eigen::AngleAxisf(euler(2), Eigen::Vector3f::UnitX());  // roll
 
         // R << 1.0f, 0.0f, 0.0f,
         //     0.0f, 1.0f, 0.0f,
         //     0.0f, 0.0f, 1.0f;
 
         return R;
+    }
+
+    double radToDeg(double radians)
+    {
+        if (radians > M_PI)
+        {
+            radians -= (2 * M_PI);
+        }
+        else if (radians < -M_PI)
+        {
+            radians += (2 * M_PI);
+        }
+        return radians * (180.0 / M_PI);
     }
 
 public:
@@ -235,4 +293,14 @@ private:
     KalmanFilter kf;
 
     tf2_ros::Buffer tfBuffer;
+
+    // DEBUG
+
+    PosePublisher vio_pose_pub;
+    AccelerometerPublisher accelerometer_publisher;
+
+    Eigen::Vector3f vio_euler;
+
+public:
+    GazeboModelListener gazebo_listener;
 };
