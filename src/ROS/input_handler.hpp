@@ -15,6 +15,7 @@
 
 #include <mutex>
 #include "visual_inertial/single_kalman.hpp"
+#include "visual_inertial/imu_fusion.hpp"
 #include "data_buffer.hpp"
 
 #include "./DataAssociator.hpp"
@@ -23,6 +24,9 @@
 
 #include "./DEBUG/gazebo_state_sub.hpp"
 
+#define DEG_TO_RAD 0.01745329
+#define RAD_TO_DEG 57.2957786
+
 // rosrun lsd_slam_core live_slam image:=/camera/image_raw camera_info:=/kinect/depth/camera_info
 
 typedef Eigen::Matrix<float, 9, 1> State;
@@ -30,63 +34,87 @@ typedef Eigen::Matrix<float, 9, 1> State;
 class INPUT_HANDLER
 {
 public:
-    INPUT_HANDLER(State &state) : dt(0.005),
-                                  A(Eigen::MatrixXd::Zero(6, 6)),
-                                  C(Eigen::MatrixXd::Identity(6, 6)),
-                                  Q(Eigen::MatrixXd::Identity(6, 6)),
-                                  R(Eigen::MatrixXd::Identity(6, 6)),
-                                  P(Eigen::MatrixXd::Identity(6, 6)),
-                                  efk_state(state), vio_pose_pub("visual_intertial/vio")
+    INPUT_HANDLER(State &state, bool _isGazebo) : dt(0.005), isGazebo(_isGazebo),
+                                                  A(Eigen::MatrixXd::Zero(3, 3)),
+                                                  A_gyro(Eigen::MatrixXd::Identity(3, 3)),
+                                                  C(Eigen::MatrixXd::Identity(3, 3)),
+                                                  Q(Eigen::MatrixXd::Identity(3, 3)),
+                                                  R(Eigen::MatrixXd::Identity(3, 3)),
+                                                  P(Eigen::MatrixXd::Identity(3, 3)),
+                                                  efk_state(state), vio_pose_pub("visual_intertial/vio")
     {
+
         // Define the state transition matrix A
-        Eigen::MatrixXd I = Eigen::MatrixXd::Identity(3, 3);
-        A << I, dt * I,
-            Eigen::MatrixXd::Zero(3, 3), I;
+        // dt 0 0
+        // 0 dt 0
+        // 0 0 dt
+        A << dt, 0.0, 0.0, 0.0, dt, 0.0, 0.0, 0.0, dt;
 
         // Define the Kalman filter
-        kf = KalmanFilter(dt, A, C, Q, R, P);
+        kf_acc = KalmanFilter(dt, A, C, Q, R, P);
+
+        kf_gyro = KalmanFilter(dt, A_gyro, C, Q, R, P);
 
         // Initialize NodeHandle
         ros::NodeHandle nh;
 
         // Initialize subscribers and publishers
         lsd_pose_sub = nh.subscribe("/lsd_slam/pose", 10, &INPUT_HANDLER::lsdPoseCallback, this);
-        imu_data_sub = nh.subscribe("/drone/imu", 10, &INPUT_HANDLER::imuDataCallback, this);
+        imu_data_sub = nh.subscribe("/imu0", 10, &INPUT_HANDLER::imuDataCallback, this);
 
         // Best guess of initial states
-        Eigen::VectorXd x0(6); // X = [vx, vy, vz, rx, ry, rz]^T
+        Eigen::VectorXd x0_acc(3); // X = [vx, vy, vz]^T
         double t = ros::Time::now().toSec();
-        x0 << 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f;
-        kf.init(t, x0);
+        x0_acc << 0.0f, 0.0f, 0.0f;
+        kf_acc.init(t, x0_acc);
+        kf_gyro.init(t, x0_acc);
+
+        kalmanZ.setRmeasure(0.03);
+
+        // Values from IMU calibration
+        double noiseGyro = 1.7e-04;   // rad/sec/sqrt(Hz)
+        double noiseAcc = 2.0e-03;    // m/sec^2/sqrt(Hz)
+        double gyroWalk = 1.9393e-05; // rad/sec^2/sqrt(Hz)
+        double accWalk = 3.e-03;      // m/sec^3/sqrt(Hz)
+
+        // Convert to variance values
+        double Q_angle = noiseAcc * noiseAcc;     // Variance for the accelerometer
+        double Q_bias = gyroWalk * gyroWalk;      // Variance for the gyro bias
+        double R_measure = noiseGyro * noiseGyro; // Measurement noise variance
+
+        kalmanX.setQangle(Q_angle);
+        kalmanX.setQbias(Q_bias);
+        kalmanX.setRmeasure(R_measure);
+
+        kalmanY.setQangle(Q_angle);
+        kalmanY.setQbias(Q_bias);
+        kalmanY.setRmeasure(R_measure);
     }
 
 private:
     void lsdPoseCallback(const geometry_msgs::PoseStamped::ConstPtr &msg)
     {
 
-        tf2::Quaternion qua_t_;
-        // qua_t_.setRPY(0, 3.14159, 3.14159);
-        qua_t_.setRPY(-1.5708, 0.0, 0.0);
-
-        // Now, convert this quaternion into an Eigen rotation matrix
-        Eigen::Quaterniond eigen_quat(qua_t_.w(), qua_t_.x(), qua_t_.y(), qua_t_.z());
-        Eigen::Matrix3d R_world_to_openCV = eigen_quat.toRotationMatrix();
-
-        // std::cout << "Rotation Matrix = \n"
-        //           << R_world_to_openCV << std::endl;
-
-        Eigen::Matrix4d transformation_matrix = Eigen::Matrix4d::Identity();                  // Creating a 4x4 Identity matrix
-        transformation_matrix.block<3, 3>(0, 0) = R_world_to_openCV;                          // Filling the rotation part of the matrix
-        Eigen::Isometry3d transformation_isometry = Eigen::Isometry3d(transformation_matrix); // Converting it to Isomet
-
         // Convert the PoseStamped message to an Eigen pose
         Eigen::Isometry3d current_pose_eigen_lsd;
         tf2::fromMsg(msg->pose, current_pose_eigen_lsd);
 
-        // Transform the pose to world frame
-        Eigen::Isometry3d current_pose_eigen = current_pose_eigen_lsd;
-        current_pose_eigen = transformation_isometry * current_pose_eigen_lsd;
-        // Applying transformation
+        // The rotation matrix and translation vector obtained from evo_ape
+        Eigen::Matrix3d rotation;
+        rotation << 0.19121822, 0.1643474, -0.96769082,
+            0.98039522, -0.07973737, 0.18018647,
+            -0.04754794, -0.98317439, -0.17637265;
+        // Eigen::Vector3d translation(-3.41436698, 0.37332561, 1.34172433);
+
+        Eigen::Vector3d translation(0.0, 0.0, 0.0);
+
+        // Convert the rotation and translation into a transformation matrix
+        Eigen::Isometry3d transformation(Eigen::Matrix4d::Identity());
+        transformation.prerotate(rotation);
+        transformation.pretranslate(translation);
+
+        // Apply the transformation to the pose
+        Eigen::Isometry3d current_pose_eigen = transformation * current_pose_eigen_lsd;
 
         ros::Time current_time = msg->header.stamp;
 
@@ -105,7 +133,15 @@ private:
 
         data_associator.addLsdData(lsd_vel_v, time);
 
-        // Convert position to Eigen::Vector3d
+        if (scale_estimate > 0 && scale_estimate < 10)
+        {
+            // Convert position to Eigen::Vector3d
+        }
+        else
+        {
+            scale_estimate = 6.0;
+        }
+
         Eigen::Vector3d position = current_pose_eigen.translation() * scale_estimate;
 
         // Convert rotation to Eigen angles
@@ -146,46 +182,40 @@ private:
         if (imu_to_world_trans(*msg, acceleration))
         {
 
-            AccelerometerType acc;
-
-            acc[0] = acceleration[0];
-            acc[1] = acceleration[1];
-            acc[2] = acceleration[2];
-            // accelerometer_publisher.publishAccelerometer(acc);
-
             // Update Kalman filter with acceleration
-            kf.update(acceleration);
+            kf_acc.update(acceleration.head(3)); // gets linear velocity
 
             // Get estimated state (which includes velocity)
-            Eigen::VectorXd estimated_state = kf.state();
+            Eigen::VectorXd estimated_velocity = kf_acc.state();
+            Eigen::VectorXd estimated_angular_velocity = kf_gyro.state();
 
-            // Extract velocity from estimated state
-            Eigen::VectorXd estimated_velocity = estimated_state.head(3); // first 3 elements are linear velocity
+            Eigen::VectorXd estimated_state(6);
+            estimated_state << estimated_velocity, estimated_angular_velocity;
 
             // ROS_INFO_STREAM("T State: \n"
             //                 << estimated_velocity.format(Eigen::IOFormat(Eigen::FullPrecision)));
 
             ros::Time time = ros::Time::now();
 
+            // RUNTIME
+            data_associator.addImuData(estimated_velocity, time);
+            imu_buffer_world.addPair(estimated_state, time);
+
             // DEBUG
 
-            data_associator.addImuData(gazebo_listener.getLinearVel(), time);
-
-            imu_buffer_world.addPair(acceleration, time);
+            // data_associator.addImuData(gazebo_listener.getLinearVel(), time);
+            // imu_buffer_world.addPair(acceleration, time);
         }
     }
 
 public:
-    bool imu_to_world_trans(sensor_msgs::Imu imu_msg, Eigen::VectorXd &tranformed)
+    bool imu_to_world_trans(sensor_msgs::Imu _imu_msg, Eigen::VectorXd &tranformed)
     {
+
+        sensor_msgs::Imu imu_msg = tranform_EuRoC_to_ROS_frame(_imu_msg);
+
         // Define world gravity
         Eigen::Vector3f gravity_world_frame(0.0, 0.0, 9.81);
-
-        // R for imu_to_gazebo_imu ( Ry_90 then Rx_90 -> Rx*Ry)
-        Eigen::Matrix3f rawtoGazebo;
-        rawtoGazebo << 0.0f, 0.0f, 1.0f,
-            1.0f, 0.0f, 0.0f,
-            0.0f, 1.0f, 0.0f;
 
         if (efk_state.size() < 6)
         {
@@ -193,71 +223,112 @@ public:
             return false;
         }
 
-        // Retrieve state
-        Eigen::Vector3f position_world = efk_state.head<3>(); // x, y, z
+        kf_gyro.update(Eigen::Vector3d(imu_msg.angular_velocity.x, imu_msg.angular_velocity.y, imu_msg.angular_velocity.z)); // angular velocity
+        Eigen::VectorXd imu_angular_velocity_filtered = kf_gyro.state();
 
-        Eigen::Vector3f eulerAngles = efk_state.segment<3>(3); // roll, pitch, yaw
-        Eigen::Matrix3f R_world_to_body = eulerToRotationMatrix(vio_euler);
+        imu_angular_velocity_filtered = Eigen::Vector3d(imu_msg.angular_velocity.x, imu_msg.angular_velocity.y, imu_msg.angular_velocity.z);
 
-        // std::cout << "ROll-VIO " << radToDeg(vio_euler[0]) << " PITCH-VIO " << radToDeg(vio_euler[1]) << std::endl;
+        Eigen::Vector4d orientation_world;
+        Eigen::Quaterniond quat;
 
-        // std::cout << " " << std::endl;
+        if (isGazebo)
+        {
+            // While we can use the Gazebo IMU for roll and pitch calculations under normal conditions, if external forces are applied to the drone via plugins, it might introduce complexities that the simulated IMU cannot handle accurately. So we just use the Gazebo pose topic instead
+            orientation_world << gazebo_listener.getSafeOrientation();
 
-        // Get the IMU data in the form of Eigen::Vector3f
+            // Convert Eigen::Vector4d to Eigen::Quaterniond
+            quat = Eigen::Quaterniond(orientation_world(3), orientation_world(0), orientation_world(1), orientation_world(2)); // w, x, y, z
+        }
+        else
+        {
+            // We use the real imu data to calculate eurler orientation and then transform to quaternions
+            double roll, pitch, yaw;
+            yaw = 2 * M_PI;
+            calc_eurler_angle(imu_msg, imu_angular_velocity_filtered, roll, pitch);
+
+            // Create a 3D rotation matrix from roll, pitch, and yaw
+            Eigen::AngleAxisd rollAngle(roll, Eigen::Vector3d::UnitX());
+            Eigen::AngleAxisd pitchAngle(pitch, Eigen::Vector3d::UnitY());
+            Eigen::AngleAxisd yawAngle(yaw, Eigen::Vector3d::UnitZ());
+
+            // Combine the rotations in the correct order: yaw, pitch, roll
+            quat = (yawAngle * pitchAngle * rollAngle);
+        }
+
+        // Convert Eigen::Quaterniond to Eigen::Matrix3d
+        Eigen::Matrix3f R_world_to_body = quat.toRotationMatrix().cast<float>();
+
+        // Get the IMU data in the form of Eigen::Vector3 f
         Eigen::Vector3f imu_linear_acceleration(imu_msg.linear_acceleration.x, imu_msg.linear_acceleration.y, imu_msg.linear_acceleration.z);
 
-        // Compute the combined rotation from world to IMU (Note we fist re-allign the IMU vector with the gazebo vector with rawtoGazebo)
-        Eigen::Matrix3f R_world_to_imu = rawtoGazebo * R_world_to_body; // Note the order of multiplication
-
         // Rotate gravity to the IMU frame
-        Eigen::Vector3f gravity_imu_frame = R_world_to_imu * gravity_world_frame;
+        Eigen::Vector3f gravity_imu_frame = R_world_to_body.inverse() * gravity_world_frame;
 
         // Subtract gravity from acceleration
-        imu_linear_acceleration -= gravity_imu_frame;
+      
+        imu_linear_acceleration += gravity_imu_frame;
+        
+
+        ROS_INFO_STREAM("T State: \n"
+                        << imu_linear_acceleration.format(Eigen::IOFormat(Eigen::FullPrecision)));
 
         /** NOW WE HAVE REMOVED' THE GRAVITY VECTOR FROM THE IMU READINGS, WE CAN TRANFORM THE IMU READINGS FROM THE BODY FRAME TO THE WORLD FRAME */
 
         // Rotate linear acceleration from IMU frame to world frame
-        Eigen::Vector3f imu_linear_acceleration_transformed = R_world_to_imu.transpose() * imu_linear_acceleration;
-
-        // Rotate angular velocity from IMU frame to world frame
-        Eigen::Vector3f imu_angular_velocity_transformed = R_world_to_imu.transpose() * Eigen::Vector3f(imu_msg.angular_velocity.x, imu_msg.angular_velocity.y, imu_msg.angular_velocity.z);
+        Eigen::Vector3f imu_linear_acceleration_transformed = R_world_to_body.transpose() * imu_linear_acceleration;
 
         // Prepare result
-        tranformed << imu_linear_acceleration_transformed.cast<double>(), imu_angular_velocity_transformed.cast<double>();
+        tranformed << imu_linear_acceleration_transformed.cast<double>(), imu_angular_velocity_filtered;
 
         return true;
     }
 
-    Eigen::Matrix3f eulerToRotationMatrix(Eigen::Vector3f euler)
+    sensor_msgs::Imu tranform_EuRoC_to_ROS_frame(sensor_msgs::Imu imu_msg)
     {
-        Eigen::Matrix3f R;
-        // R = Eigen::AngleAxisf(euler(2), Eigen::Vector3f::UnitZ()) * // yaw
-        //     Eigen::AngleAxisf(euler(1), Eigen::Vector3f::UnitY()) * // pitch
-        //     Eigen::AngleAxisf(euler(0), Eigen::Vector3f::UnitX());  // roll
 
-        R = Eigen::AngleAxisf(euler(0), Eigen::Vector3f::UnitZ()) * // yaw
-            Eigen::AngleAxisf(euler(1), Eigen::Vector3f::UnitY()) * // pitch
-            Eigen::AngleAxisf(euler(2), Eigen::Vector3f::UnitX());  // roll
+        sensor_msgs::Imu transformed_imu;
 
-        // R << 1.0f, 0.0f, 0.0f,
-        //     0.0f, 1.0f, 0.0f,
-        //     0.0f, 0.0f, 1.0f;
+        if (isGazebo)
+        {
+            // No transformation required
+            transformed_imu = imu_msg;
+        }
+        else
+        {
+            // Here we manually apply a -90deg rotation around the y axis of the EuRoC data
+            transformed_imu.linear_acceleration.x = imu_msg.linear_acceleration.z;
+            transformed_imu.linear_acceleration.y = imu_msg.linear_acceleration.y;
+            transformed_imu.linear_acceleration.z = -imu_msg.linear_acceleration.x;
 
-        return R;
+            transformed_imu.angular_velocity.x = imu_msg.angular_velocity.z;
+            transformed_imu.angular_velocity.y = imu_msg.angular_velocity.y;
+            transformed_imu.angular_velocity.z = -imu_msg.angular_velocity.x;
+
+            transformed_imu.orientation = imu_msg.orientation;
+
+        }
+
+        
+        return transformed_imu;
     }
 
-    double radToDeg(double radians)
+    void calc_eurler_angle(sensor_msgs::Imu imu_msg, Eigen::VectorXd &angular_vel, double &_roll, double &_pitch)
     {
-        if (radians > M_PI)
-        {
-            radians -= (2 * M_PI);
-        }
-        else if (radians < -M_PI)
-        {
-            radians += (2 * M_PI);
-        }
-        return radians * (180.0 / M_PI);
+
+        angular_vel = angular_vel;
+
+        double pitch = atan2((imu_msg.linear_acceleration.x), sqrt(imu_msg.linear_acceleration.y * imu_msg.linear_acceleration.y + imu_msg.linear_acceleration.z * imu_msg.linear_acceleration.z));
+
+        double roll = -atan2(imu_msg.linear_acceleration.y, -imu_msg.linear_acceleration.z);
+
+        kalAngleY = kalmanY.getAngle(pitch, angular_vel[1], dt); // Calculate the angle using a Kalman filter
+
+        kalAngleX = kalmanX.getAngle(roll, angular_vel[0], dt);
+
+        _roll = kalAngleX;
+        _pitch = kalAngleY;
+
+        // std::cout << "Pitch:" << _pitch << " roll: " << _roll << std::endl;
     }
 
 public:
@@ -279,20 +350,31 @@ private:
 
     const size_t buffer_size = 100;
 
+    bool isGazebo;
+
     ros::Time prev_pose_update;
     Eigen::Isometry3d prev_pose_eigen;
 
     double dt;
-    Eigen::MatrixXd A; // System dynamics matrix
-    Eigen::MatrixXd C; // Output matrix
-    Eigen::MatrixXd Q; // Process noise covariance
-    Eigen::MatrixXd R; // Measurement noise covariance
-    Eigen::MatrixXd P; // Estimate error covariance
+    Eigen::MatrixXd A;      // System dynamics matrix
+    Eigen::MatrixXd A_gyro; // System dynamics matrix
+    Eigen::MatrixXd C;      // Output matrix
+    Eigen::MatrixXd Q;      // Process noise covariance
+    Eigen::MatrixXd R;      // Measurement noise covariance
+    Eigen::MatrixXd P;      // Estimate error covariance
 
     // Declare kf after the members it depends on
-    KalmanFilter kf;
+    KalmanFilter kf_acc;
+
+    KalmanFilter kf_gyro;
 
     tf2_ros::Buffer tfBuffer;
+
+    IMU_FUSION kalmanX; // Kalman filter instance for X axis
+    IMU_FUSION kalmanY; // Kalman filter instance for Y axis
+    IMU_FUSION kalmanZ; // Kalman filter instance for Z asis
+
+    double kalAngleX, kalAngleY, kalAngleZ; // Calculated angle using a Kalman filter
 
     // DEBUG
 
@@ -304,3 +386,9 @@ private:
 public:
     GazeboModelListener gazebo_listener;
 };
+
+// linear_acceleration:
+//   x: -3.637751047318559
+//   y: -4.81203488009604e-10
+//   z: 9.099822378371442
+// linear_acceleration_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]

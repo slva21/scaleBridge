@@ -9,7 +9,7 @@ add_compile_options(-std=c++11)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS
   geometry_msgs
-  lsd_slam_viewer
+  # lsd_slam_viewer
   roscpp
   sensor_msgs
   std_msgs
@@ -111,7 +111,7 @@ include_directories(${EIGEN3_INCLUDE_DIR})
 catkin_package(
   INCLUDE_DIRS include
   LIBRARIES visual_interial
-  CATKIN_DEPENDS geometry_msgs lsd_slam_viewer roscpp sensor_msgs std_msgs tf2 tf2_ros tf2_geometry_msgs
+  CATKIN_DEPENDS geometry_msgs roscpp sensor_msgs std_msgs tf2 tf2_ros tf2_geometry_msgs
 #  DEPENDS system_lib
 )
 

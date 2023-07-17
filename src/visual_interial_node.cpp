@@ -27,13 +27,18 @@ int main(int argc, char **argv)
 {
     ros::init(argc, argv, "interial_pluggin");
 
+    ros::NodeHandle nh;
+
+    bool isGazebo = false;
+    //nh.param("isGazebo", false);
+
     ROS_INFO("INERTIAL PLUGIN FOR ROS LSD SLAM: BY ADEBAYO, 2023, KINGS COLLEGE LONDON ");
 
     x0 << 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f;
 
-    INPUT_HANDLER ros_lsd_imu_input(x0);
+    INPUT_HANDLER ros_lsd_imu_input(x0, isGazebo);
 
-    ScaleEstimator scale_estimator(20); // window size of 20
+    ScaleEstimator scale_estimator(2000); // window size of 200
 
     std::thread t_ekf(RUN_EKF, &ros_lsd_imu_input); // spawn new thread that calls bar(0)
 
@@ -55,7 +60,7 @@ int main(int argc, char **argv)
             scale_estimator.AddDataPair(matching_data.first, matching_data.second);
 
             // Update the scale estimate
-            ros_lsd_imu_input.scale_estimate = scale_estimator.EstimateScale();
+            scale_estimator.EstimateScale(ros_lsd_imu_input.scale_estimate);
 
             // std::cout << "ESTIMATED SCALE: " << ros_lsd_imu_input.scale_estimate << std::endl;
 
@@ -70,6 +75,8 @@ int main(int argc, char **argv)
 
 void RUN_EKF(INPUT_HANDLER *ros_lsd_imu_input)
 {
+
+    // Use gazebo position values here to test if the EKF is working as expected
     x0.setZero();
 
     PosePublisher ekf_pose_pub("visual_intertial/ekf");
@@ -101,11 +108,12 @@ void RUN_EKF(INPUT_HANDLER *ros_lsd_imu_input)
 
             // DEBUG
             Eigen::Vector3d linear_vel = ros_lsd_imu_input->gazebo_listener.getLinearVel();
+
             Eigen::Vector3d rot_vel = ros_lsd_imu_input->gazebo_listener.getAngularVel();
 
             ControlType control;
             control << linear_vel(0), linear_vel(1), linear_vel(2), rot_vel(0), rot_vel(1), rot_vel(2);
-            x0 = ekf.predict(systemModel, control);
+            x0 = ekf.predict(systemModel, u);
         }
 
         Eigen::VectorXd lsd_pos_world(6);
@@ -113,10 +121,39 @@ void RUN_EKF(INPUT_HANDLER *ros_lsd_imu_input)
 
         if (ros_lsd_imu_input->vio_buffer_world.fetchData(lsd_pos_world, _dt))
         {
+
             // Define measurement (from VIO)
             MeasurementType z;
 
             z = lsd_pos_world.cast<float>();
+            // z[0] = z[0]*6.0;
+            // z[1] = z[1]*6.0;
+            // z[2] = z[2]*6.0;
+
+            //
+
+            Eigen::Vector3d gazebo_pos = ros_lsd_imu_input->gazebo_listener.getSafePosition();
+
+            Eigen::Vector4d gazebo_orien = ros_lsd_imu_input->gazebo_listener.getSafeOrientation();
+
+            Eigen::Quaterniond q(
+                gazebo_orien[3],
+                gazebo_orien[0],
+                gazebo_orien[1],
+                gazebo_orien[2]);
+
+            Eigen::Vector3d euler = q.toRotationMatrix().eulerAngles(2, 1, 0);
+
+            double roll = euler[2];
+            double pitch = euler[1];
+            double yaw = euler[0];
+
+            // DEBUG
+
+            MeasurementType _z;
+
+            _z << gazebo_pos.cast<float>(), (float)roll, (float)pitch, (float)yaw;
+
             // Perform update step with the measurement model and measurement
             x0 = ekf.update(measurementModel, z);
         }
@@ -184,3 +221,7 @@ void test_imu_to_world_trans(INPUT_HANDLER *ros_lsd_imu_input)
 
     std::cout << "Test passed.\n";
 }
+
+// rosrun lsd_slam_core live_slam image:=/camera/image_raw camera_info:=/kinect/depth/camera_info
+
+// evo_ape kitti ./gazebo_poses.txt vio_poses.txt -va --correct_scale --plot
