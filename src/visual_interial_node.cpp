@@ -29,7 +29,7 @@ int main(int argc, char **argv)
 
     ros::NodeHandle nh;
 
-    bool isGazebo = false;
+    bool isGazebo = true;
     //nh.param("isGazebo", false);
 
     ROS_INFO("INERTIAL PLUGIN FOR ROS LSD SLAM: BY ADEBAYO, 2023, KINGS COLLEGE LONDON ");
@@ -224,4 +224,15 @@ void test_imu_to_world_trans(INPUT_HANDLER *ros_lsd_imu_input)
 
 // rosrun lsd_slam_core live_slam image:=/camera/image_raw camera_info:=/kinect/depth/camera_info
 
+// rosrun lsd_slam_core live_slam image:=/cam0/image_raw _calib:=/home/sorair/catkin_ws/src/visual_intertial/lsd_slam_cfg/EuRoC.cfg
+
+// rosrun lsd_slam_core live_slam image:=/cam0/image_raw camera_info:=/camera_info
+
+//rosrun lsd_slam_core live_slam image:=/tello/camera _hz:=20 _calib:=/home/sorair/catkin_ws/src/visual_intertial/lsd_slam_cfg/tello.cfg
+
 // evo_ape kitti ./gazebo_poses.txt vio_poses.txt -va --correct_scale --plot
+
+
+ // R_c1Tb << 0.19121822, 0.1643474, -0.96769082,
+        //     0.98039522, -0.07973737, 0.18018647,
+        //     -0.04754794, -0.98317439, -0.17637265;
