@@ -59,7 +59,8 @@ public:
         ros::NodeHandle nh;
 
         // Initialize subscribers and publishers
-        lsd_pose_sub = nh.subscribe("/lsd_slam/pose", 10, &INPUT_HANDLER::lsdPoseCallback, this);
+        // lsd_pose_sub = nh.subscribe("/lsd_slam/pose", 10, &INPUT_HANDLER::lsdPoseCallback, this);
+        lsd_pose_sub = nh.subscribe("/orb_slam3/camera_pose", 10, &INPUT_HANDLER::lsdPoseCallback, this);
         imu_data_sub = nh.subscribe("/drone/imu", 10, &INPUT_HANDLER::imuDataCallback, this);
 
         // Best guess of initial states
@@ -107,10 +108,6 @@ private:
             -1.0, 0.0, 0.0,
             0.0, -1.0, 0.0;
 
-        R_body_to_world_mtx.lock();
-        SR_bTw = R_body_to_world.cast<double>(); // dont forget to inverse this is the orientation is obtained from gazebo
-        R_body_to_world_mtx.unlock();
-
         // Convert the R_c1Tb and translation into a transformation matrix
         Eigen::Isometry3d T_c1Tb(Eigen::Matrix4d::Identity());
         T_c1Tb.rotate(R_c1Tb);
@@ -121,12 +118,10 @@ private:
 
         Eigen::Isometry3d T_cvTw = T_c1Tb.prerotate(SR_bTw); // ST_bTw * T_c1Tb;
 
-        // Eigen::Isometry3d T_cvTw = T_c1Tb;
-
         // Apply the T_c1Tb to the pose
         Eigen::Isometry3d current_pose_eigen = (T_cvTw * current_pose_eigen_cv);
 
-        // Eigen::Isometry3d current_pose_eigen = current_pose_eigen_cv;
+        //Eigen::Isometry3d current_pose_eigen = current_pose_eigen_cv;
 
         ros::Time current_time = msg->header.stamp;
 
@@ -233,7 +228,7 @@ public:
 
         if (efk_state.size() < 6)
         {
-            std::cerr << "Error: efk_state has less than 6 elements!\n";
+            ROS_ERROR("Error: efk_state has less than 6 elements!\n");
             return false;
         }
 
@@ -245,9 +240,12 @@ public:
         // Get the IMU data in the form of Eigen::Vector3 f
         Eigen::Vector3f imu_linear_acceleration(imu_msg.linear_acceleration.x, imu_msg.linear_acceleration.y, imu_msg.linear_acceleration.z);
 
-        R_body_to_world_mtx.lock();
+        if (!SR_bTw_initialised) // We only want ot update this once at the start
+        {   
+            SR_bTw = get_bTw(imu_msg, imu_angular_velocity_filtered).cast<double>();
+        }
+
         R_body_to_world = get_bTw(imu_msg, imu_angular_velocity_filtered);
-        R_body_to_world_mtx.unlock();
 
         // Rotate gravity to the IMU frame
         Eigen::Vector3f gravity_imu_frame = R_body_to_world.inverse() * gravity_world_frame;
@@ -278,11 +276,12 @@ public:
         if (isGazebo)
         {
             // While we can use the Gazebo IMU for roll and pitch calculations under normal conditions, if external forces are applied to the drone via plugins, it might introduce complexities that the simulated IMU cannot handle accurately. So we just use the Gazebo pose topic instead
-            orientation_world  <<  gazebo_listener.getSafeOrientation();
+            orientation_world << gazebo_listener.getSafeOrientation();
 
             // Convert Eigen::Vector4d to Eigen::Quaterniond
             Eigen::Quaterniond quat_;
             quat = Eigen::Quaterniond(orientation_world(3), orientation_world(0), orientation_world(1), orientation_world(2)); // w, x, y, z
+            quat.inverse();                                                                                                    // we wanr bTw not wTb
 
         }
         else
@@ -299,7 +298,10 @@ public:
 
             // Combine the rotations in the correct order: yaw, pitch, roll
             quat = (yawAngle * pitchAngle * rollAngle);
+
         }
+
+        SR_bTw_initialised = true;
 
         // Convert Eigen::Quaterniond to Eigen::Matrix3d
         return quat.normalized().toRotationMatrix().cast<float>();

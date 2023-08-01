@@ -10,6 +10,7 @@
 
 #include "visual_inertial/extended_kalman_conf.hpp"
 #include "ROS/pose_pub.hpp"
+#include "visual_inertial/scale_optimiserv2.hpp"
 
 geometry_msgs::TransformStamped get_cam_to_body();
 
@@ -38,7 +39,9 @@ int main(int argc, char **argv)
 
     INPUT_HANDLER ros_lsd_imu_input(x0, isGazebo);
 
-    ScaleEstimator scale_estimator(2000); // window size of 200
+    ScaleEstimator scale_estimator(2000); // window size of 2000
+
+    ScaleEstimatorV2 scale_estimatorv2(2000); // window size of 2000
 
     std::thread t_ekf(RUN_EKF, &ros_lsd_imu_input); // spawn new thread that calls bar(0)
 
@@ -59,10 +62,16 @@ int main(int argc, char **argv)
             // Pass to scale optimiser
             scale_estimator.AddDataPair(matching_data.first, matching_data.second);
 
+            // scale_estimatorv2.AddDataPair(matching_data.first, matching_data.second);
+
             // Update the scale estimate
             scale_estimator.EstimateScale(ros_lsd_imu_input.scale_estimate);
 
-            // std::cout << "ESTIMATED SCALE: " << ros_lsd_imu_input.scale_estimate << std::endl;
+            // double scale_v2;
+            // scale_estimatorv2.EstimateScale();
+            // scale_v2  = scale_estimatorv2.GetScale();
+
+           // std::cout << "ESTIMATED SCALE: " << scale_v2 << std::endl;
 
             //   ROS_INFO_STREAM("mathcing data found");
         }
@@ -230,7 +239,7 @@ void test_imu_to_world_trans(INPUT_HANDLER *ros_lsd_imu_input)
 
 //rosrun lsd_slam_core live_slam image:=/tello/camera _hz:=20 _calib:=/home/sorair/catkin_ws/src/visual_intertial/lsd_slam_cfg/tello.cfg
 
-// evo_ape kitti ./gazebo_poses.txt vio_poses.txt -va --correct_scale --plot
+// evo_ape kitti ./gazebo_poses3.txt orb_rgbd.txt -va --correct_scale --plot
 
 
  // R_c1Tb << 0.19121822, 0.1643474, -0.96769082,

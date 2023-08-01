@@ -68,7 +68,8 @@
 			"core": "cpp",
 			"strstream": "cpp",
 			"cfenv": "cpp",
-			"typeindex": "cpp"
+			"typeindex": "cpp",
+			"forward_list": "cpp"
 		},
 		"python.autoComplete.extraPaths": [
 			"/home/sorair/catkin_ws/devel/lib/python3/dist-packages",
