@@ -32,15 +32,3 @@ private:
     ros::Publisher imu_pub_;
 };
 
-// int main(int argc, char** argv) {
-//   ros::init(argc, argv, "accelerometer_publisher_node");
-//   AccelerometerPublisher accelerometer_publisher;
-
-//   // Example usage:
-//   AccelerometerType accelerometer;
-//   accelerometer << 1.0, 2.0, 3.0;
-//   accelerometer_publisher.publishAccelerometer(accelerometer);
-
-//   ros::spin();
-//   return 0;
-// }

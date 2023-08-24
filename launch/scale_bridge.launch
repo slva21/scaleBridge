@@ -1,0 +1,24 @@
+<launch>
+	<!-- Load parameters from the YAML file -->
+	<rosparam command="load" file="$(find scale_bridge)/config/lsd_config.yaml" />
+	<!-- Run the scale_bridge_node -->
+	<node name="scale_bridge" pkg="scale_bridge" type="scale_bridge_node" output="screen">
+
+		<!-- Output Topics -->
+		<!-- Relayed Output Topic of MonoSLAM Estimates -->
+		<remap from="visual_intertial/vio" to="your_new_topic_for_vio" />
+		<!-- Output Topic of ScaleBridge EKF Estimates -->
+		<remap from="visual_intertial/ekf" to="your_new_topic_for_ekf" />
+		<!-- Relayed Output Topic of gazebo model pose -->
+		<remap from="visual_intertial/gazebo" to="your_new_topic_for_gazebo" />
+		<!-- Output Topic of Scale Estimates -->
+		<remap from="visual_inertial/scale" to="your_new_topic_for_scale" />
+
+		
+		<!-- Input Topics -->
+		<!-- Input topic from MonoSLAM PoseStamped topic -->
+		<remap from="/orb_slam2_mono/pose" to="your_new_topic_for_pose" />
+		<!-- Input topic from IMU -->
+		<remap from="/tello/imu" to="your_new_topic_for_imu" />
+	</node>
+</launch>

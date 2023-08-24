@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <package format="2">
-  <name>visual_intertial</name>
+  <name>scale_bridge</name>
   <version>0.0.0</version>
   <description>The visual_interial package</description>
 
@@ -66,6 +66,7 @@
   <build_export_depend>tf2</build_export_depend>
   <build_export_depend>tf2_ros</build_export_depend>
   <build_depend>tf2_geometry_msgs</build_depend>
+  <build_depend>message_generation</build_depend>
 
   <exec_depend>geometry_msgs</exec_depend>
   <!-- <exec_depend>lsd_slam_viewer</exec_depend> -->
@@ -75,6 +76,11 @@
   <exec_depend>tf2</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
   <exec_depend>tf2_geometry_msgs</exec_depend>
+  <exec_depend>message_runtime</exec_depend>
+
+  
+
+
 
 
   <!-- The export tag contains other, unspecified, tags -->

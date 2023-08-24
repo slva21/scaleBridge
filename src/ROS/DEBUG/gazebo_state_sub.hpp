@@ -10,8 +10,10 @@ class GazeboModelListener
 public:
     GazeboModelListener()
     {
-        ros::NodeHandle n;
-        model_states_sub = n.subscribe("/gazebo/model_states", 10, &GazeboModelListener::modelStatesCallback, this);
+        ros::NodeHandle nh;
+        model_states_sub = nh.subscribe("/gazebo/model_states", 10, &GazeboModelListener::modelStatesCallback, this);
+
+        nh.getParam("DEBUG_ModelName", modelName);
     }
 
     Eigen::Vector3d getLinearVel()
@@ -45,12 +47,13 @@ private:
     Eigen::Vector3d linear_vel;
     Eigen::Vector3d angular_vel;
     std::mutex lock_mutex;
+    std::string modelName;
 
     void modelStatesCallback(const gazebo_msgs::ModelStates::ConstPtr &msg)
     {
         for (size_t i = 0; i < msg->name.size(); ++i)
         {
-            if (msg->name[i] == "sjtu_drone")
+            if (msg->name[i] == modelName)
             {
                 std::lock_guard<std::mutex> lock(lock_mutex);
                 orientation = Eigen::Vector4d(msg->pose[i].orientation.x,

@@ -1,0 +1,40 @@
+File.version: "1.0"
+
+#--------------------------------------------------------------------------------------------
+# System config
+#--------------------------------------------------------------------------------------------
+
+# Note: IMU axis must be in the ROS axis
+
+
+# Transformation from camera to body-frame (imu)
+# T_C1^B = R_z(-90) * R_x(-90)
+R_c1Tb: [0.0, 0.0, 1.0, 
+        -1.0, 0.0, 0.0, 
+        0.0, -1.0, 0.0]
+
+SE_BufferSize: 5000    # Buffer Size of the Scale Estimator  
+CC_BufferSize: 1000    # Buffer size of the convergence checker
+CC_StdThreshhold: 1.5  # Standard Deviation threshold for Convergence 
+ 
+# IMU noise
+IMU_NoiseGyro: 1.7e-04    # rad/sec/sqrt(Hz)
+IMU_NoiseAcc: 2.0e-03     # m/sec^2/sqrt(Hz)
+IMU_GyroWalk: 1.9393e-05  # rad/sec^2/sqrt(Hz)
+IMU_AccWalk: 3.e-03       # m/sec^3/sqrt(Hz)
+IMU_Frequency: 200.0
+
+# Use Gazebo Model topic for IMU
+DEBUG_UseGazebo: false
+DEBUG_ModelName: "sjtu_drone" # Will be ignored if 'UseGazebo' is set to false
+
+
+
+    # // T_C1^B = R_z(-90) * R_x(-90)
+    #     // R_c1Tb << 0.0, 0.0, 1.0,
+    #     //     -1.0, 0.0, 0.0,
+    #     //     0.0, -1.0, 0.0;
+
+    #     // R_c1Tb << 0.19121822, 0.1643474, -0.96769082,
+    #     //     0.98039522, -0.07973737, 0.18018647,
+    #     //     -0.04754794, -0.98317439, -0.17637265;

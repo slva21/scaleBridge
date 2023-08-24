@@ -39,12 +39,13 @@ public:
         // Check if buffer is full
         if (imu_buffer_.size() < buffer_size_ || vio_buffer_.size() < buffer_size_)
         {
-            ROS_WARN("IMU BUFFER NOT FULL");
+           // ROS_WARN("IMU BUFFER NOT FULL");
             return false;
         }
 
         int N = imu_buffer_.size();
-        Eigen::MatrixXd A(N, 1);
+       // Eigen::MatrixXd A(N, 1);
+        Eigen::VectorXd A(N);
         Eigen::VectorXd b(N);
 
         for (int i = 0; i < N; ++i)
@@ -53,9 +54,10 @@ public:
             A(i) = vio_buffer_[i].norm();    // Use the magnitude of vio velocity
         }
 
-        Eigen::VectorXd x = A.bdcSvd(Eigen::ComputeThinU | Eigen::ComputeThinV).solve(b); // Solve Ax = b
+        //Eigen::VectorXd x = A.bdcSvd(Eigen::ComputeThinU | Eigen::ComputeThinV).solve(b); // Solve Ax = b
+        // scale = x(0); // The first element in x should be the scale factor
 
-        scale = x(0); // The first element in x should be the scale factor
+        scale = (A.transpose() * b).sum() / (A.transpose() * A).sum();
 
         return true;
     }

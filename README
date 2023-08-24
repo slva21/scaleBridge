@@ -1,0 +1,51 @@
+Scale Bridge
+Overview
+
+The Scale Bridge is a ROS package designed to perform certain functionalities related to scale estimation. The project requires certain dependencies and is configured to build with C++11 standards.
+
+Installation
+
+Dependencies
+
+    ROS (Robot Operating System), tested with Kinetic and later versions.
+    Eigen3
+    Ceres
+    Geometry_msgs
+    Roscpp
+    Sensor_msgs
+    Std_msgs
+    Tf2, tf2_ros, tf2_geometry_msgs
+
+
+Building from Source
+
+Here are the instructions to build the project from source:
+1. Clone the Repository
+
+Navigate to your workspace's src directory and clone the repository:
+'cd ~/catkin_ws/src'
+'git clone https://github.com/slva21/scale_bridge.git'
+
+2. Install Required Packages
+Make sure you have the required dependencies. On a system with ROS, you can use the following command to install the necessary packages:
+'sudo apt-get install ros-$ROS_DISTRO-tf2 ros-$ROS_DISTRO-tf2-ros ros-$ROS_DISTRO-tf2-geometry-msgs'
+
+3. Build the Package
+Navigate to your workspace's root directory and build the package:
+'cd ~/catkin_ws'
+'catkin build'
+'source ~/catkin_ws/devel/setup.bash'
+
+
+Topics
+Output Topics:
+
+    MonoSLAM Estimates: "visual_intertial/vio"
+    ScaleBridge EKF Estimates: "visual_intertial/ekf"
+    Gazebo Model Pose: "visual_intertial/gazebo"
+    Scale Estimates:  "visual_inertial/scale"
+
+Input Topics:
+
+    MonoSLAM PoseStamped Topic: "/orb_slam2_mono/pose"
+    IMU Topic: "/tello/imu"
