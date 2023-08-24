@@ -19,7 +19,7 @@
     <!-- data source to integrate (PointCloud2) -->
     <!-- <remap from="cloud_in" to="/transformed_cloud" /> -->
      
-    <remap from="cloud_in" to="/orb_slam3/map_points" />
+    <remap from="cloud_in" to="/orb_slam2/map_points" />
     
   </node>
 </launch>
