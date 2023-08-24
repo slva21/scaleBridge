@@ -193,25 +193,3 @@ void RUN_EKF(INPUT_HANDLER *ros_lsd_imu_input, bool useGazebo)
         }
     }
 }
-
-// rosrun lsd_slam_core live_slam image:=/camera/image_raw camera_info:=/kinect/depth/camera_info
-
-// rosrun lsd_slam_core live_slam image:=/cam0/image_raw _calib:=/home/sorair/catkin_ws/src/scale_bridge/lsd_slam_cfg/EuRoC.cfg
-
-// rosrun lsd_slam_core live_slam image:=/cam0/image_raw camera_info:=/camera_info
-
-// rosrun lsd_slam_core live_slam image:=/tello/camera _hz:=20 _calib:=/home/sorair/catkin_ws/src/scale_bridge/lsd_slam_cfg/tello.cfg
-
-// evo_ape kitti ROOM2_vio.txt ROOM2_EKF.txt -va --plot
-
-// evo_ape kitti ROOM2_vio.txt ROOM2_EKF.txt -va --plot --save_results results/LSD.zip
-
-// evo_res results/*.zip -p --save_table results/table.csv
-
-// R_c1Tb << 0.19121822, 0.1643474, -0.96769082,
-//     0.98039522, -0.07973737, 0.18018647,
-//     -0.04754794, -0.98317439, -0.17637265;
-
-// roslaunch orb_slam2_ros orb_slam2_d435_mono.launch
-
-// rosrun tf static_transform_publisher 0 0 0 0 0 0 map world 100

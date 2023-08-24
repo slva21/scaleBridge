@@ -78,8 +78,6 @@ public:
 
         // Initialize subscribers and publishers
         lsd_pose_sub = nh.subscribe("/orb_slam2_mono/pose", 10, &INPUT_HANDLER::MonoSLAMPoseCallback, this);
-        // lsd_pose_sub = nh.subscribe("/lsd_slam/pose", 10, &INPUT_HANDLER::MonoSLAMPoseCallback, this);
-        // lsd_pose_sub = nh.subscribe("/orb_slam3/camera_pose", 10, &INPUT_HANDLER::MonoSLAMPoseCallback, this);
         imu_data_sub = nh.subscribe("/tello/imu", 10, &INPUT_HANDLER::imuDataCallback, this);
 
         // Best guess of initial states
