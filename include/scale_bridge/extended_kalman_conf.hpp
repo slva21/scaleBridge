@@ -51,8 +51,7 @@ public:
 
     void updateJacobians(const StateType &x, const ControlType &u) override
     {
-        // Calculate and update the Jacobians here
-        // Placeholder, replace with your actual Jacobian calculations
+        
         // Set all elements of F to zero
         this->F.setZero();
 
@@ -90,7 +89,7 @@ class VIOPoseMeasurementModel : public Kalman::LinearizedMeasurementModel<StateT
 public:
     VIOPoseMeasurementModel(double _scale_factor) : scale_factor(_scale_factor)
     {
-        R = Kalman::SquareMatrix<float, 6>::Zero(); // Replace this with the actual measurement noise covariance
+        R = Kalman::SquareMatrix<float, 6>::Zero(); 
         R.diagonal() << 1e-4, 1e-4, 1e-4, 1e-4, 1e-4, 1e-4;
         this->setCovariance(R);
     }
@@ -110,7 +109,7 @@ public:
     void updateJacobians(const StateType &x) override
 
     {
-        // Assuming that your measurements are simply the position and orientation, the Jacobian of the
+        // Assuming that our measurements are simply the position and orientation, the Jacobian of the
         // measurement function with respect to the state is an identity matrix for those variables and zero elsewhere.
 
         // Set all elements of H to zero
